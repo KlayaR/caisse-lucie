@@ -270,11 +270,9 @@ function genererPDF() {
   doc.text(`Facture n°${num} — ${d.texte}`, 300, 225.5, { align: "center" });
 
   // --- En-tête du tableau ---
-  // Bord droit commun : le "X" de PRIX et le bord droit visible de chaque "€".
-  // Le glyphe € a un crénage à droite (≈0,516 × taille) : on décale les montants
-  // d'autant pour que le bord visible du € tombe pile sous le X de PRIX.
+  // Bord droit commun : "PRIX" et tous les montants € sont alignés à droite sur x=580
+  // (l'encre du € atteint déjà ce bord, vérifié au pixel près sur le ticket d'origine).
   const xPrix = 580;
-  const xEuro = (taille) => xPrix + 0.516 * taille;
   doc.setFont("helvetica", "bold").setFontSize(14).setTextColor(...NOIR);
   doc.text("DÉNOMINATION PRODUIT", 62.5, 280);
   doc.text("QUANTITÉ", 375, 280, { align: "center" });
@@ -286,7 +284,7 @@ function genererPDF() {
   for (const a of panier.values()) {
     doc.text(a.nom, 15, y);
     doc.text(String(a.qte), 375, y, { align: "center" });
-    doc.text(euro(a.prix * a.qte), xEuro(16), y, { align: "right" });
+    doc.text(euro(a.prix * a.qte), xPrix, y, { align: "right" });
     y += 25;
   }
   const yDernierArticle = y - 25;
@@ -302,7 +300,7 @@ function genererPDF() {
     doc.setFont("helvetica", gras ? "bold" : "normal").setFontSize(taille);
     doc.setTextColor(...NOIR);
     doc.text(label, 15, yy);
-    if (valeur != null) doc.text(euro(valeur), xEuro(taille), yy, { align: "right" });
+    if (valeur != null) doc.text(euro(valeur), xPrix, yy, { align: "right" });
   };
 
   const yTTC = yDernierArticle + 66.8;
