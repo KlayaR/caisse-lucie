@@ -132,6 +132,21 @@ function clientsParJour() {
   return parseInt(localStorage.getItem(CLE_CLIENTS) || "250", 10) || 250;
 }
 
+// Numéros déjà émis (pour garantir l'unicité même si deux tickets tombent
+// sur la même date/heure -> on prend le suivant libre, +1, +2, ...).
+const CLE_EMIS = "lucie_numeros_emis";
+function numerosEmis() {
+  try { return new Set(JSON.parse(localStorage.getItem(CLE_EMIS) || "[]")); }
+  catch (e) { return new Set(); }
+}
+function reserverNumeroUnique(n) {
+  const emis = numerosEmis();
+  while (emis.has(n)) n++;
+  emis.add(n);
+  localStorage.setItem(CLE_EMIS, JSON.stringify([...emis]));
+  return n;
+}
+
 // Poids d'affluence relatif par heure (0h..23h) : restauration rapide,
 // pics au déjeuner (12-14h) et au dîner (19-21h), nuit très calme.
 const AFFLUENCE = [
@@ -278,10 +293,23 @@ function genererPDF() {
     elNum.focus();
     return;
   }
-  // Page US Legal (612 x 1008 pt) — coordonnées calquées sur le ticket LUCIE d'origine.
-  // Tout est en points (pt), origine en haut à gauche, y = ligne de base du texte.
+  // Hauteur de page calculée d'après le nombre d'articles : le ticket s'arrête
+  // juste sous le trait des totaux (pas de bloc CB -> pas d'espace vide en bas).
+  // Largeur 612 pt (comme l'original) ; coordonnées calquées sur le ticket LUCIE.
+  const articles = [...panier.values()];
+  const yDernierArticle = 311.8 + 25 * (articles.length - 1);
+  const yTTC = yDernierArticle + 66.8;
+  const yLigne = yTTC + 112.4;
+  const hauteur = yLigne + 28; // petite marge basse
+
+  // orientation choisie pour empêcher jsPDF d'inverser largeur/hauteur :
+  // on veut toujours 612 pt de large, quelle que soit la hauteur.
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit: "pt", format: [612, 1008] });
+  const doc = new jsPDF({
+    orientation: hauteur > 612 ? "portrait" : "landscape",
+    unit: "pt",
+    format: [612, hauteur],
+  });
 
   // Prix au format de l'original : point décimal + " €"
   const euro = (n) => n.toFixed(2) + " €";
@@ -306,7 +334,9 @@ function genererPDF() {
   doc.text(COMMERCE.tel, droite, 148.7, { align: "right" });
 
   // --- Titre facture (orange, centré) ---
-  const num = parseInt(elNum.value, 10);
+  // Numéro réellement utilisé = numéro affiché, rendu unique (anti-collision).
+  const num = reserverNumeroUnique(parseInt(elNum.value, 10));
+  elNum.value = String(num);
   const d = dateFR(dateDesReglages());
   doc.setFont("helvetica", "bold").setFontSize(20).setTextColor(...ORANGE);
   doc.text(`Facture n°${num} — ${d.texte}`, 300, 225.5, { align: "center" });
@@ -323,13 +353,12 @@ function genererPDF() {
   // --- Lignes d'articles ---
   doc.setFont("helvetica", "normal").setFontSize(16);
   let y = 311.8;
-  for (const a of panier.values()) {
+  for (const a of articles) {
     doc.text(a.nom, 15, y);
     doc.text(String(a.qte), 375, y, { align: "center" });
     doc.text(euro(a.prix * a.qte), xPrix, y, { align: "right" });
     y += 25;
   }
-  const yDernierArticle = y - 25;
 
   // --- Totaux (positionnés sous le dernier article, espacements de l'original) ---
   const ttc = totalTTC();
@@ -345,16 +374,14 @@ function genererPDF() {
     if (valeur != null) doc.text(euro(valeur), xPrix, yy, { align: "right" });
   };
 
-  const yTTC = yDernierArticle + 66.8;
   ligne("Montant total TTC", ttc, true, yTTC);
   ligne("Montant total HT", ht, false, yTTC + 19.3);
   ligne(`Taux de TVA ${taux} %`, null, true, yTTC + 52.0);
   ligne(`Montant total TVA ${taux} %`, tva, false, yTTC + 71.3);
   ligne("Montant total TVA", tva, true, yTTC + 104.0);
 
-  // trait de séparation sous les totaux (x 15 -> 600)
-  const yLigne = yTTC + 112.4;
-  doc.setDrawColor(150, 150, 150).setLineWidth(0.7);
+  // trait de séparation sous les totaux (épaisseur ~1 pt comme l'original)
+  doc.setDrawColor(90, 90, 90).setLineWidth(1.1);
   doc.line(15, yLigne, 600, yLigne);
 
   doc.save(`Ticket_Lucie_${num}.pdf`);
