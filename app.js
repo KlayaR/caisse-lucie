@@ -117,26 +117,47 @@ function majPanier() {
   }
 }
 
-// ---- Numéro de facture : généré automatiquement de façon plausible ----
-// On mémorise le dernier numéro émis ET l'instant (date/heure) de ce ticket.
-// Le prochain numéro progresse selon le temps écoulé depuis le dernier ticket
-// et un nombre approximatif de clients/jour, avec une petite variation réaliste.
-const CLE_NUM = "lucie_dernier_num";
-const CLE_TS = "lucie_dernier_ts";
+// ---- Numéro de facture : compteur de caisse virtuel, fonction de la date/heure ----
+// Le numéro NE dépend PAS du dernier ticket émis, mais uniquement de la date/heure
+// choisie (donc backdater donne un numéro plus petit et cohérent, et le numéro se
+// recalcule en direct quand on change la date). On ancre sur un ticket connu, puis :
+//   numéro(date) = ANCRE_NUM + arrondi( clients/jour × Φ(date) )
+// où Φ = nombre de "jours-clients" entre l'ancre et la date, en intégrant une courbe
+// d'affluence sur 24h (pics midi/soir, nuit très calme) et une variation par jour.
 const CLE_CLIENTS = "lucie_clients_jour";
+const ANCRE_NUM = 1247065;
+const ANCRE = new Date(2026, 5, 16, 12, 45); // 16 juin 2026 12h45
 
-function dernierNumero() {
-  return parseInt(localStorage.getItem(CLE_NUM) || "1247064", 10);
-}
-function dernierInstant() {
-  return parseInt(localStorage.getItem(CLE_TS) || String(Date.now()), 10);
-}
 function clientsParJour() {
-  return parseInt(localStorage.getItem(CLE_CLIENTS) || "120", 10) || 120;
+  return parseInt(localStorage.getItem(CLE_CLIENTS) || "250", 10) || 250;
 }
-function enregistrerEmission(num, tsMs) {
-  localStorage.setItem(CLE_NUM, String(num));
-  localStorage.setItem(CLE_TS, String(tsMs));
+
+// Poids d'affluence relatif par heure (0h..23h) : restauration rapide,
+// pics au déjeuner (12-14h) et au dîner (19-21h), nuit très calme.
+const AFFLUENCE = [
+  0.3, 0.2, 0.15, 0.15, 0.15, 0.2,   // 0h-5h
+  0.5, 0.9, 1.2, 1.0, 1.0, 1.8,      // 6h-11h
+  4.5, 4.5, 2.5, 1.0, 0.9, 1.4,      // 12h-17h
+  2.5, 4.5, 4.5, 2.8, 1.5, 0.7,      // 18h-23h
+];
+const AFFLUENCE_TOTAL = AFFLUENCE.reduce((a, b) => a + b, 0);
+
+// Part cumulée d'une journée écoulée à l'heure h (0..24) -> 0..1
+function partJournee(h) {
+  const k = Math.floor(h);
+  const f = h - k;
+  let somme = 0;
+  for (let i = 0; i < k && i < 24; i++) somme += AFFLUENCE[i];
+  if (k < 24) somme += f * AFFLUENCE[k];
+  return somme / AFFLUENCE_TOTAL;
+}
+
+// Index de jour stable (indépendant du fuseau) à partir des composantes de date
+function indexJour(d) {
+  return Math.round(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000);
+}
+function heureFrac(d) {
+  return d.getHours() + d.getMinutes() / 60;
 }
 
 // Variation pseudo-aléatoire mais STABLE (même graine -> même résultat) ~[0.85 ; 1.15]
@@ -147,6 +168,26 @@ function variationStable(graine) {
     h = Math.imul(h, 16777619);
   }
   return 0.85 + ((h >>> 0) % 1000) / 1000 * 0.3;
+}
+// Variation propre à chaque jour calendaire (chaque jour ±15 %, stable)
+function variationJour(idxJour) {
+  return variationStable(`jour|${idxJour}`);
+}
+
+// Nombre de clients entre deux instants A (avant) et B (après), en intégrant la
+// courbe d'affluence jour par jour, chaque jour pondéré par sa variation.
+function clientsEntre(jourA, partA, jourB, partB) {
+  const D = clientsParJour();
+  if (jourA === jourB) return D * variationJour(jourA) * (partB - partA);
+  let total = D * variationJour(jourA) * (1 - partA); // fin du jour A
+  const nbPleins = jourB - jourA - 1;
+  if (nbPleins > 366) {
+    total += D * nbPleins; // très long écart : la variation (moy. 1) se moyenne
+  } else {
+    for (let j = jourA + 1; j < jourB; j++) total += D * variationJour(j);
+  }
+  total += D * variationJour(jourB) * partB; // début du jour B
+  return total;
 }
 
 // ---- Date FR ----
@@ -186,15 +227,17 @@ function dateDesReglages() {
   return new Date(a, m - 1, j, h, mi);
 }
 
-// Numéro plausible : dernier numéro + (clients/jour × jours écoulés × variation)
+// Numéro = ANCRE_NUM + clients écoulés entre l'ancre et la date choisie
+// (positif dans le futur, négatif dans le passé).
 function numeroAutomatique() {
-  const last = dernierNumero();
-  let jours = (dateDesReglages().getTime() - dernierInstant()) / 86400000;
-  if (!(jours > 0)) jours = 0;
-  const v = variationStable(`${last}|${elDate.value}|${elHeure.value}`);
-  let ecart = Math.round(clientsParJour() * jours * v);
-  if (ecart < 1) ecart = 1; // toujours unique et supérieur au précédent
-  return last + ecart;
+  const cible = dateDesReglages();
+  const aJ = indexJour(ANCRE), aP = partJournee(heureFrac(ANCRE));
+  const bJ = indexJour(cible), bP = partJournee(heureFrac(cible));
+  const cibleApres = bJ > aJ || (bJ === aJ && bP >= aP);
+  const ecart = cibleApres
+    ? clientsEntre(aJ, aP, bJ, bP)
+    : -clientsEntre(bJ, bP, aJ, aP);
+  return ANCRE_NUM + Math.round(ecart);
 }
 
 function majNumeroAuto() {
@@ -204,13 +247,12 @@ function majNumeroAuto() {
 
 function validerNumero() {
   const n = parseInt(elNum.value, 10);
-  const mini = dernierNumero() + 1;
-  const ok = Number.isInteger(n) && n > dernierNumero();
+  const ok = Number.isInteger(n) && n > 0;
   elNum.classList.toggle("erreur", !ok);
   elAide.classList.toggle("erreur", !ok);
   elAide.textContent = ok
-    ? `Calculé d'après ~${clientsParJour()} clients/jour et le temps écoulé (dernier émis : n°${dernierNumero()}). Modifiable à la main.`
-    : `Le numéro doit être supérieur au précédent (≥ ${mini}).`;
+    ? `Calculé d'après la date/heure du ticket et ~${clientsParJour()} clients/jour (pics midi & soir). Modifiable à la main.`
+    : `Numéro invalide.`;
   return ok;
 }
 
@@ -233,7 +275,7 @@ elNum.addEventListener("input", validerNumero);
 // ---- Génération du PDF (reproduit le ticket LUCIE) ----
 function genererPDF() {
   if (!validerNumero()) {
-    document.getElementById("overlay").hidden = false;
+    elNum.focus();
     return;
   }
   // Page US Legal (612 x 1008 pt) — coordonnées calquées sur le ticket LUCIE d'origine.
@@ -316,11 +358,6 @@ function genererPDF() {
   doc.line(15, yLigne, 600, yLigne);
 
   doc.save(`Ticket_Lucie_${num}.pdf`);
-
-  // Ce ticket devient le dernier émis (numéro + instant) ; le champ
-  // recalcule alors automatiquement le prochain numéro plausible.
-  enregistrerEmission(num, dateDesReglages().getTime());
-  majNumeroAuto();
 }
 
 // ---- Branchements ----
