@@ -13,32 +13,34 @@
   <header class="topbar">
     <img src="logo.jpeg" alt="Lucie" />
     <h1>Caisse — Ticket de caisse</h1>
-    <button class="btn-reglages" id="btnReglages" aria-label="Réglages du ticket">⚙</button>
   </header>
 
-  <main id="menu"><!-- généré par app.js --></main>
-
-  <!-- Modale Réglages du ticket -->
-  <div class="overlay" id="overlay" hidden>
-    <div class="modale" role="dialog" aria-modal="true" aria-labelledby="titreReglages">
-      <h2 id="titreReglages">Réglages du ticket</h2>
-
-      <label for="champNumero">Numéro de facture</label>
-      <input type="number" id="champNumero" inputmode="numeric" min="1" step="1" />
-      <p class="aide" id="aideNumero"></p>
-
-      <label for="champDate">Date</label>
-      <input type="date" id="champDate" />
-
-      <label for="champHeure">Heure</label>
-      <input type="time" id="champHeure" />
-
-      <div class="modale-actions">
-        <button class="btn btn-vider" id="btnMaintenant">Date/heure : maintenant</button>
-        <button class="btn btn-pdf" id="btnFermerReglages">OK</button>
+  <main>
+    <!-- Réglages du ticket, directement sur la page -->
+    <section class="reglages">
+      <div class="grille">
+        <div class="champ">
+          <label for="champDate">Date</label>
+          <input type="date" id="champDate" />
+        </div>
+        <div class="champ">
+          <label for="champHeure">Heure</label>
+          <input type="time" id="champHeure" />
+        </div>
+        <div class="champ">
+          <label for="champNumero">N° de facture (auto)</label>
+          <input type="number" id="champNumero" inputmode="numeric" step="1" />
+        </div>
+        <div class="champ">
+          <label for="champClients">≈ clients / jour</label>
+          <input type="number" id="champClients" inputmode="numeric" min="1" step="1" />
+        </div>
       </div>
-    </div>
-  </div>
+      <p class="aide" id="aideNumero"></p>
+    </section>
+
+    <div id="menu"><!-- généré par app.js --></div>
+  </main>
 
   <section class="panier">
     <div class="detail-panier" id="detailPanier">

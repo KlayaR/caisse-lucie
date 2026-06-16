@@ -117,13 +117,36 @@ function majPanier() {
   }
 }
 
-// ---- Numéro de facture : dernier numéro utilisé (persistant) ----
-const CLE_DERNIER_NUM = "lucie_facture_num";
+// ---- Numéro de facture : généré automatiquement de façon plausible ----
+// On mémorise le dernier numéro émis ET l'instant (date/heure) de ce ticket.
+// Le prochain numéro progresse selon le temps écoulé depuis le dernier ticket
+// et un nombre approximatif de clients/jour, avec une petite variation réaliste.
+const CLE_NUM = "lucie_dernier_num";
+const CLE_TS = "lucie_dernier_ts";
+const CLE_CLIENTS = "lucie_clients_jour";
+
 function dernierNumero() {
-  return parseInt(localStorage.getItem(CLE_DERNIER_NUM) || "1247064", 10);
+  return parseInt(localStorage.getItem(CLE_NUM) || "1247064", 10);
 }
-function enregistrerDernierNumero(n) {
-  localStorage.setItem(CLE_DERNIER_NUM, String(n));
+function dernierInstant() {
+  return parseInt(localStorage.getItem(CLE_TS) || String(Date.now()), 10);
+}
+function clientsParJour() {
+  return parseInt(localStorage.getItem(CLE_CLIENTS) || "120", 10) || 120;
+}
+function enregistrerEmission(num, tsMs) {
+  localStorage.setItem(CLE_NUM, String(num));
+  localStorage.setItem(CLE_TS, String(tsMs));
+}
+
+// Variation pseudo-aléatoire mais STABLE (même graine -> même résultat) ~[0.85 ; 1.15]
+function variationStable(graine) {
+  let h = 2166136261;
+  for (let i = 0; i < graine.length; i++) {
+    h ^= graine.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return 0.85 + ((h >>> 0) % 1000) / 1000 * 0.3;
 }
 
 // ---- Date FR ----
@@ -140,10 +163,11 @@ function dateFR(d) {
   return { texte: `le ${jj} ${mm} ${aaaa} à ${hh}h${min}`, hh, min };
 }
 
-// ---- Réglages du ticket (n° de facture, date, heure) ----
+// ---- Réglages du ticket (inline sur la page) : date, heure, n°, clients/jour ----
 const elNum = document.getElementById("champNumero");
 const elDate = document.getElementById("champDate");
 const elHeure = document.getElementById("champHeure");
+const elClients = document.getElementById("champClients");
 const elAide = document.getElementById("aideNumero");
 
 function pad2(n) { return String(n).padStart(2, "0"); }
@@ -154,26 +178,6 @@ function remplirDateHeureMaintenant() {
   elHeure.value = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
-function reglerNumeroParDefaut() {
-  const suivant = dernierNumero() + 1;
-  elNum.min = String(suivant);
-  elNum.value = String(suivant);
-  validerNumero();
-}
-
-function validerNumero() {
-  const n = parseInt(elNum.value, 10);
-  const mini = dernierNumero() + 1;
-  let ok = true;
-  if (!Number.isInteger(n) || n <= dernierNumero()) ok = false;
-  elNum.classList.toggle("erreur", !ok);
-  elAide.classList.toggle("erreur", !ok);
-  elAide.textContent = ok
-    ? `Dernier ticket émis : n°${dernierNumero()}. Ce numéro doit rester unique et croissant.`
-    : `Le numéro doit être supérieur au précédent (≥ ${mini}).`;
-  return ok;
-}
-
 // Construit un objet Date à partir des champs date + heure (ou maintenant)
 function dateDesReglages() {
   if (!elDate.value || !elHeure.value) return new Date();
@@ -182,23 +186,49 @@ function dateDesReglages() {
   return new Date(a, m - 1, j, h, mi);
 }
 
-// Init des champs au démarrage
-reglerNumeroParDefaut();
-remplirDateHeureMaintenant();
+// Numéro plausible : dernier numéro + (clients/jour × jours écoulés × variation)
+function numeroAutomatique() {
+  const last = dernierNumero();
+  let jours = (dateDesReglages().getTime() - dernierInstant()) / 86400000;
+  if (!(jours > 0)) jours = 0;
+  const v = variationStable(`${last}|${elDate.value}|${elHeure.value}`);
+  let ecart = Math.round(clientsParJour() * jours * v);
+  if (ecart < 1) ecart = 1; // toujours unique et supérieur au précédent
+  return last + ecart;
+}
 
+function majNumeroAuto() {
+  elNum.value = String(numeroAutomatique());
+  validerNumero();
+}
+
+function validerNumero() {
+  const n = parseInt(elNum.value, 10);
+  const mini = dernierNumero() + 1;
+  const ok = Number.isInteger(n) && n > dernierNumero();
+  elNum.classList.toggle("erreur", !ok);
+  elAide.classList.toggle("erreur", !ok);
+  elAide.textContent = ok
+    ? `Calculé d'après ~${clientsParJour()} clients/jour et le temps écoulé (dernier émis : n°${dernierNumero()}). Modifiable à la main.`
+    : `Le numéro doit être supérieur au précédent (≥ ${mini}).`;
+  return ok;
+}
+
+// Init
+remplirDateHeureMaintenant();
+elClients.value = String(clientsParJour());
+majNumeroAuto();
+
+// La date / l'heure / le débit changent -> on recalcule le numéro
+elDate.addEventListener("input", majNumeroAuto);
+elHeure.addEventListener("input", majNumeroAuto);
+elClients.addEventListener("input", () => {
+  const v = parseInt(elClients.value, 10);
+  if (Number.isInteger(v) && v > 0) localStorage.setItem(CLE_CLIENTS, String(v));
+  majNumeroAuto();
+});
+// Édition manuelle du numéro : on valide sans l'écraser
 elNum.addEventListener("input", validerNumero);
-document.getElementById("btnReglages").addEventListener("click", () => {
-  document.getElementById("overlay").hidden = false;
-});
-document.getElementById("btnFermerReglages").addEventListener("click", () => {
-  if (!validerNumero()) return; // empêche de fermer avec un n° invalide
-  document.getElementById("overlay").hidden = true;
-});
-document.getElementById("btnMaintenant").addEventListener("click", remplirDateHeureMaintenant);
-document.getElementById("overlay").addEventListener("click", (e) => {
-  if (e.target.id === "overlay" && validerNumero())
-    document.getElementById("overlay").hidden = true;
-});
 
 // ---- Génération du PDF (reproduit le ticket LUCIE) ----
 function genererPDF() {
@@ -240,10 +270,15 @@ function genererPDF() {
   doc.text(`Facture n°${num} — ${d.texte}`, 300, 225.5, { align: "center" });
 
   // --- En-tête du tableau ---
+  // Bord droit commun : le "X" de PRIX et le bord droit visible de chaque "€".
+  // Le glyphe € a un crénage à droite (≈0,516 × taille) : on décale les montants
+  // d'autant pour que le bord visible du € tombe pile sous le X de PRIX.
+  const xPrix = 580;
+  const xEuro = (taille) => xPrix + 0.516 * taille;
   doc.setFont("helvetica", "bold").setFontSize(14).setTextColor(...NOIR);
   doc.text("DÉNOMINATION PRODUIT", 62.5, 280);
   doc.text("QUANTITÉ", 375, 280, { align: "center" });
-  doc.text("PRIX", 580, 280, { align: "right" });
+  doc.text("PRIX", xPrix, 280, { align: "right" });
 
   // --- Lignes d'articles ---
   doc.setFont("helvetica", "normal").setFontSize(16);
@@ -251,7 +286,7 @@ function genererPDF() {
   for (const a of panier.values()) {
     doc.text(a.nom, 15, y);
     doc.text(String(a.qte), 375, y, { align: "center" });
-    doc.text(euro(a.prix * a.qte), 571, y, { align: "right" });
+    doc.text(euro(a.prix * a.qte), xEuro(16), y, { align: "right" });
     y += 25;
   }
   const yDernierArticle = y - 25;
@@ -263,10 +298,11 @@ function genererPDF() {
   const tva = ttc - ht;
 
   const ligne = (label, valeur, gras, yy) => {
-    doc.setFont("helvetica", gras ? "bold" : "normal").setFontSize(gras ? 18 : 15);
+    const taille = gras ? 18 : 15;
+    doc.setFont("helvetica", gras ? "bold" : "normal").setFontSize(taille);
     doc.setTextColor(...NOIR);
     doc.text(label, 15, yy);
-    if (valeur != null) doc.text(euro(valeur), 571, yy, { align: "right" });
+    if (valeur != null) doc.text(euro(valeur), xEuro(taille), yy, { align: "right" });
   };
 
   const yTTC = yDernierArticle + 66.8;
@@ -283,10 +319,10 @@ function genererPDF() {
 
   doc.save(`Ticket_Lucie_${num}.pdf`);
 
-  // Le numéro vient d'être utilisé : il devient le dernier émis,
-  // et le champ propose automatiquement le suivant.
-  enregistrerDernierNumero(num);
-  reglerNumeroParDefaut();
+  // Ce ticket devient le dernier émis (numéro + instant) ; le champ
+  // recalcule alors automatiquement le prochain numéro plausible.
+  enregistrerEmission(num, dateDesReglages().getTime());
+  majNumeroAuto();
 }
 
 // ---- Branchements ----
