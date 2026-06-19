@@ -45,6 +45,7 @@ header.topbar h1 { font-size: 17px; margin: 0; color: var(--vert-fonce); flex: 1
   gap: 10px;
 }
 .reglages .champ { display: flex; flex-direction: column; }
+.reglages .champ-large { grid-column: 1 / -1; }
 .reglages label {
   font-size: 12px; font-weight: 600; color: #555; margin-bottom: 4px;
 }

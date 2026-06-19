@@ -117,20 +117,18 @@ function majPanier() {
   }
 }
 
-// ---- Numéro de facture : compteur de caisse virtuel, fonction de la date/heure ----
-// Le numéro NE dépend PAS du dernier ticket émis, mais uniquement de la date/heure
-// choisie (donc backdater donne un numéro plus petit et cohérent, et le numéro se
-// recalcule en direct quand on change la date). On ancre sur un ticket connu, puis :
-//   numéro(date) = ANCRE_NUM + arrondi( clients/jour × Φ(date) )
-// où Φ = nombre de "jours-clients" entre l'ancre et la date, en intégrant une courbe
-// d'affluence sur 24h (pics midi/soir, nuit très calme) et une variation par jour.
-const CLE_CLIENTS = "lucie_clients_jour";
-const ANCRE_NUM = 1247065;
-const ANCRE = new Date(2026, 5, 16, 12, 45); // 16 juin 2026 12h45
-
-function clientsParJour() {
-  return parseInt(localStorage.getItem(CLE_CLIENTS) || "250", 10) || 250;
-}
+// ---- Numéro de facture : fonction linéaire de la date/heure ----
+// Le numéro de facture est un compteur global du système de caisse (~7,3 factures/min,
+// pas le compteur de clients de ce magasin). On le modélise par une droite passant
+// EXACTEMENT par deux factures réelles connues :
+//   P1 : n°1247065  le 16/06/2026 à 12h45
+//   P2 : n°1277912  le 19/06/2026 à 11h09   (soit +30847 en 70h24 ≈ 7,30/min)
+// numéro(date) = P1 + débit × (date − date_P1)   -> backdater donne un n° plus petit,
+// et le numéro se recalcule en direct quand on change la date/heure.
+const P1 = { num: 1247065, date: new Date(2026, 5, 16, 12, 45) };
+const P2 = { num: 1277912, date: new Date(2026, 5, 19, 11, 9) };
+const DEBIT_PAR_MS = (P2.num - P1.num) / (P2.date.getTime() - P1.date.getTime());
+const DEBIT_PAR_MIN = DEBIT_PAR_MS * 60000; // ≈ 7,3
 
 // Numéros déjà émis (pour garantir l'unicité même si deux tickets tombent
 // sur la même date/heure -> on prend le suivant libre, +1, +2, ...).
@@ -145,64 +143,6 @@ function reserverNumeroUnique(n) {
   emis.add(n);
   localStorage.setItem(CLE_EMIS, JSON.stringify([...emis]));
   return n;
-}
-
-// Poids d'affluence relatif par heure (0h..23h) : restauration rapide,
-// pics au déjeuner (12-14h) et au dîner (19-21h), nuit très calme.
-const AFFLUENCE = [
-  0.3, 0.2, 0.15, 0.15, 0.15, 0.2,   // 0h-5h
-  0.5, 0.9, 1.2, 1.0, 1.0, 1.8,      // 6h-11h
-  4.5, 4.5, 2.5, 1.0, 0.9, 1.4,      // 12h-17h
-  2.5, 4.5, 4.5, 2.8, 1.5, 0.7,      // 18h-23h
-];
-const AFFLUENCE_TOTAL = AFFLUENCE.reduce((a, b) => a + b, 0);
-
-// Part cumulée d'une journée écoulée à l'heure h (0..24) -> 0..1
-function partJournee(h) {
-  const k = Math.floor(h);
-  const f = h - k;
-  let somme = 0;
-  for (let i = 0; i < k && i < 24; i++) somme += AFFLUENCE[i];
-  if (k < 24) somme += f * AFFLUENCE[k];
-  return somme / AFFLUENCE_TOTAL;
-}
-
-// Index de jour stable (indépendant du fuseau) à partir des composantes de date
-function indexJour(d) {
-  return Math.round(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000);
-}
-function heureFrac(d) {
-  return d.getHours() + d.getMinutes() / 60;
-}
-
-// Variation pseudo-aléatoire mais STABLE (même graine -> même résultat) ~[0.85 ; 1.15]
-function variationStable(graine) {
-  let h = 2166136261;
-  for (let i = 0; i < graine.length; i++) {
-    h ^= graine.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return 0.85 + ((h >>> 0) % 1000) / 1000 * 0.3;
-}
-// Variation propre à chaque jour calendaire (chaque jour ±15 %, stable)
-function variationJour(idxJour) {
-  return variationStable(`jour|${idxJour}`);
-}
-
-// Nombre de clients entre deux instants A (avant) et B (après), en intégrant la
-// courbe d'affluence jour par jour, chaque jour pondéré par sa variation.
-function clientsEntre(jourA, partA, jourB, partB) {
-  const D = clientsParJour();
-  if (jourA === jourB) return D * variationJour(jourA) * (partB - partA);
-  let total = D * variationJour(jourA) * (1 - partA); // fin du jour A
-  const nbPleins = jourB - jourA - 1;
-  if (nbPleins > 366) {
-    total += D * nbPleins; // très long écart : la variation (moy. 1) se moyenne
-  } else {
-    for (let j = jourA + 1; j < jourB; j++) total += D * variationJour(j);
-  }
-  total += D * variationJour(jourB) * partB; // début du jour B
-  return total;
 }
 
 // ---- Date FR ----
@@ -223,7 +163,6 @@ function dateFR(d) {
 const elNum = document.getElementById("champNumero");
 const elDate = document.getElementById("champDate");
 const elHeure = document.getElementById("champHeure");
-const elClients = document.getElementById("champClients");
 const elAide = document.getElementById("aideNumero");
 
 function pad2(n) { return String(n).padStart(2, "0"); }
@@ -242,17 +181,11 @@ function dateDesReglages() {
   return new Date(a, m - 1, j, h, mi);
 }
 
-// Numéro = ANCRE_NUM + clients écoulés entre l'ancre et la date choisie
-// (positif dans le futur, négatif dans le passé).
+// Numéro = droite calée sur P1 et P2, évaluée à la date/heure choisie
+// (positif dans le futur de P1, négatif avant).
 function numeroAutomatique() {
-  const cible = dateDesReglages();
-  const aJ = indexJour(ANCRE), aP = partJournee(heureFrac(ANCRE));
-  const bJ = indexJour(cible), bP = partJournee(heureFrac(cible));
-  const cibleApres = bJ > aJ || (bJ === aJ && bP >= aP);
-  const ecart = cibleApres
-    ? clientsEntre(aJ, aP, bJ, bP)
-    : -clientsEntre(bJ, bP, aJ, aP);
-  return ANCRE_NUM + Math.round(ecart);
+  const t = dateDesReglages().getTime();
+  return Math.round(P1.num + DEBIT_PAR_MS * (t - P1.date.getTime()));
 }
 
 function majNumeroAuto() {
@@ -266,24 +199,18 @@ function validerNumero() {
   elNum.classList.toggle("erreur", !ok);
   elAide.classList.toggle("erreur", !ok);
   elAide.textContent = ok
-    ? `Calculé d'après la date/heure du ticket et ~${clientsParJour()} clients/jour (pics midi & soir). Modifiable à la main.`
+    ? `Calculé d'après la date/heure du ticket (≈ ${DEBIT_PAR_MIN.toFixed(1)} factures/min, calé sur 2 factures réelles). Modifiable à la main.`
     : `Numéro invalide.`;
   return ok;
 }
 
 // Init
 remplirDateHeureMaintenant();
-elClients.value = String(clientsParJour());
 majNumeroAuto();
 
-// La date / l'heure / le débit changent -> on recalcule le numéro
+// La date / l'heure changent -> on recalcule le numéro
 elDate.addEventListener("input", majNumeroAuto);
 elHeure.addEventListener("input", majNumeroAuto);
-elClients.addEventListener("input", () => {
-  const v = parseInt(elClients.value, 10);
-  if (Number.isInteger(v) && v > 0) localStorage.setItem(CLE_CLIENTS, String(v));
-  majNumeroAuto();
-});
 // Édition manuelle du numéro : on valide sans l'écraser
 elNum.addEventListener("input", validerNumero);
 
