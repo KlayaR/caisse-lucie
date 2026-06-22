@@ -168,7 +168,11 @@ const elAide = document.getElementById("aideNumero");
 function pad2(n) { return String(n).padStart(2, "0"); }
 
 function remplirDateHeureMaintenant() {
-  const d = new Date();
+  // Démarre sur l'instant présent, mais jamais avant la dernière facture connue (P2) :
+  // sur un téléphone réglé sur une date antérieure à la chronologie des factures,
+  // le numéro calculé serait incohérent (voire négatif).
+  const maintenant = new Date();
+  const d = maintenant.getTime() >= P2.date.getTime() ? maintenant : new Date(P2.date);
   elDate.value = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
   elHeure.value = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
@@ -181,11 +185,12 @@ function dateDesReglages() {
   return new Date(a, m - 1, j, h, mi);
 }
 
-// Numéro = droite calée sur P1 et P2, évaluée à la date/heure choisie
-// (positif dans le futur de P1, négatif avant).
+// Numéro = droite calée sur P1 et P2, évaluée à la date/heure choisie.
+// Plancher à 1 : une date très antérieure à l'ancre donnerait un nombre négatif
+// (invalide), ce qui bloquerait l'export.
 function numeroAutomatique() {
   const t = dateDesReglages().getTime();
-  return Math.round(P1.num + DEBIT_PAR_MS * (t - P1.date.getTime()));
+  return Math.max(1, Math.round(P1.num + DEBIT_PAR_MS * (t - P1.date.getTime())));
 }
 
 function majNumeroAuto() {
@@ -213,45 +218,6 @@ elDate.addEventListener("input", majNumeroAuto);
 elHeure.addEventListener("input", majNumeroAuto);
 // Édition manuelle du numéro : on valide sans l'écraser
 elNum.addEventListener("input", validerNumero);
-
-// ---- Export du PDF (robuste mobile + desktop) ----
-const EST_MOBILE =
-  (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) ||
-  (navigator.maxTouchPoints || 0) > 0;
-
-function telechargerBlob(blob, nom) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = nom;
-  a.rel = "noopener";
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
-}
-
-function exporterPDF(doc, nom) {
-  let blob;
-  try {
-    blob = doc.output("blob");
-  } catch (e) {
-    alert("Impossible de créer le PDF : " + e);
-    return;
-  }
-  // Sur mobile : on OUVRE le PDF dans le visualiseur du navigateur, qui affiche
-  // les boutons "Télécharger" et "Imprimer" (ce que la feuille de partage ne donne pas).
-  if (EST_MOBILE) {
-    const url = URL.createObjectURL(blob);
-    const onglet = window.open(url, "_blank");
-    if (onglet) {
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
-      return;
-    }
-    URL.revokeObjectURL(url); // ouverture bloquée -> on tente le téléchargement
-  }
-  // Desktop, ou repli mobile : téléchargement classique
-  telechargerBlob(blob, nom);
-}
 
 // ---- Génération du PDF (reproduit le ticket LUCIE) ----
 function genererPDF() {
@@ -350,7 +316,7 @@ function genererPDF() {
   doc.setDrawColor(90, 90, 90).setLineWidth(1.1);
   doc.line(15, yLigne, 600, yLigne);
 
-  exporterPDF(doc, `Ticket_Lucie_${num}.pdf`);
+  doc.save(`Ticket_Lucie_${num}.pdf`);
 }
 
 // ---- Branchements ----

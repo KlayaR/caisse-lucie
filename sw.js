@@ -1,5 +1,5 @@
 // Service worker — cache pour fonctionnement hors-ligne
-const CACHE = "caisse-lucie-v9";
+const CACHE = "caisse-lucie-v10";
 const ASSETS = [
   "./",
   "./index.html",
@@ -12,7 +12,13 @@ const ASSETS = [
 ];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)));
+  // cache:"reload" -> on récupère les fichiers depuis le réseau (pas le cache HTTP
+  // du navigateur), sinon une nouvelle version pourrait re-cacher l'ancien code.
+  e.waitUntil(
+    caches.open(CACHE).then((c) =>
+      c.addAll(ASSETS.map((u) => new Request(u, { cache: "reload" })))
+    )
+  );
   self.skipWaiting();
 });
 
