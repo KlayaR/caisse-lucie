@@ -238,24 +238,18 @@ function exporterPDF(doc, nom) {
     alert("Impossible de créer le PDF : " + e);
     return;
   }
-  // Sur mobile : feuille de partage native (Enregistrer dans Fichiers, Imprimer…)
+  // Sur mobile : on OUVRE le PDF dans le visualiseur du navigateur, qui affiche
+  // les boutons "Télécharger" et "Imprimer" (ce que la feuille de partage ne donne pas).
   if (EST_MOBILE) {
-    try {
-      const fichier = new File([blob], nom, { type: "application/pdf" });
-      if (navigator.canShare && navigator.canShare({ files: [fichier] })) {
-        navigator
-          .share({ files: [fichier], title: nom })
-          .catch((e) => {
-            // si l'utilisateur n'a pas juste annulé, on retombe sur le téléchargement
-            if (!e || e.name !== "AbortError") telechargerBlob(blob, nom);
-          });
-        return;
-      }
-    } catch (e) {
-      /* on bascule sur le repli ci-dessous */
+    const url = URL.createObjectURL(blob);
+    const onglet = window.open(url, "_blank");
+    if (onglet) {
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      return;
     }
+    URL.revokeObjectURL(url); // ouverture bloquée -> on tente le téléchargement
   }
-  // Repli universel : téléchargement classique
+  // Desktop, ou repli mobile : téléchargement classique
   telechargerBlob(blob, nom);
 }
 
