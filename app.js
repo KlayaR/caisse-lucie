@@ -214,6 +214,51 @@ elHeure.addEventListener("input", majNumeroAuto);
 // Édition manuelle du numéro : on valide sans l'écraser
 elNum.addEventListener("input", validerNumero);
 
+// ---- Export du PDF (robuste mobile + desktop) ----
+const EST_MOBILE =
+  (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) ||
+  (navigator.maxTouchPoints || 0) > 0;
+
+function telechargerBlob(blob, nom) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nom;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
+}
+
+function exporterPDF(doc, nom) {
+  let blob;
+  try {
+    blob = doc.output("blob");
+  } catch (e) {
+    alert("Impossible de créer le PDF : " + e);
+    return;
+  }
+  // Sur mobile : feuille de partage native (Enregistrer dans Fichiers, Imprimer…)
+  if (EST_MOBILE) {
+    try {
+      const fichier = new File([blob], nom, { type: "application/pdf" });
+      if (navigator.canShare && navigator.canShare({ files: [fichier] })) {
+        navigator
+          .share({ files: [fichier], title: nom })
+          .catch((e) => {
+            // si l'utilisateur n'a pas juste annulé, on retombe sur le téléchargement
+            if (!e || e.name !== "AbortError") telechargerBlob(blob, nom);
+          });
+        return;
+      }
+    } catch (e) {
+      /* on bascule sur le repli ci-dessous */
+    }
+  }
+  // Repli universel : téléchargement classique
+  telechargerBlob(blob, nom);
+}
+
 // ---- Génération du PDF (reproduit le ticket LUCIE) ----
 function genererPDF() {
   if (!validerNumero()) {
@@ -311,7 +356,7 @@ function genererPDF() {
   doc.setDrawColor(90, 90, 90).setLineWidth(1.1);
   doc.line(15, yLigne, 600, yLigne);
 
-  doc.save(`Ticket_Lucie_${num}.pdf`);
+  exporterPDF(doc, `Ticket_Lucie_${num}.pdf`);
 }
 
 // ---- Branchements ----

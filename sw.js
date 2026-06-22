@@ -1,5 +1,5 @@
 // Service worker — cache pour fonctionnement hors-ligne
-const CACHE = "caisse-lucie-v7";
+const CACHE = "caisse-lucie-v8";
 const ASSETS = [
   "./",
   "./index.html",
